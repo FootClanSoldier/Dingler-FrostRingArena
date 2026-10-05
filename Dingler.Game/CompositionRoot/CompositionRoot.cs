@@ -57,6 +57,15 @@ namespace Dingler.Game.CompositionRoot
                 sc.AddSingleton(arenaRunStore);
                 sc.AddSingleton<Dingler.Game.Arena.ArenaBattleService>();
 
+                // Deck import from the Hex Codex deck builder: the site's data folder (ids.json, gems.json) and the inbox.
+                sc.AddSingleton(new Dingler.Game.DeckImport.DeckImportOptions
+                {
+                    SiteDataPath = hb.Configuration["DeckImport:SiteDataPath"] ?? "",
+                    InboxPath = hb.Configuration["DeckImport:InboxPath"] is { Length: > 0 } inbox
+                        ? inbox
+                        : Path.Combine(AppContext.BaseDirectory, "data", "deck-inbox"),
+                });
+
                 sc.AddSingletonStartupService(_ => new CollectionCacheService(gameDataLocation, arenaRunStore))
                     .AddHttpClient("AuthClient", (sp, client) =>
                     {
@@ -84,6 +93,7 @@ namespace Dingler.Game.CompositionRoot
                     .AddScoped<PlayerProfileRepository>()
                     .AddScoped<FriendRepository>()
                     .AddScoped<DeckService>()
+                    .AddScoped<Dingler.Game.DeckImport.DeckImportService>()
                     .AddScoped<GameManager>()
                     .AddScoped<SessionManager>()
                     .AddScoped<IStreamHandler, HexStreamHandler>()
