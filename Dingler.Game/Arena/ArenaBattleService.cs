@@ -5,6 +5,7 @@ using Dingler.Game.Games;
 using HexGame::Game.Shared;
 using HexGame::Game.Shared.Mechanics;
 using HexGame::Game.Shared.Network.Campaign;
+using HexGame::Game.Shared.Network.Profile;
 using HexGame::Reckoning.Game;
 using Microsoft.Extensions.Logging;
 
@@ -192,6 +193,7 @@ public sealed class ArenaBattleService
 			var tierBit = 2 << (fight.Order / 5);   // TierLoss: tier 1 = 2, tier 2 = 4, tier 3 = 8, tier 4 = 16
 			var notes = new List<string>();
 			var newLoot = new List<ArenaLootRecord>();
+			var earnedFlags = new List<string>();
 			if (won)
 			{
 				fight.Result = "WIN";
@@ -219,6 +221,7 @@ public sealed class ArenaBattleService
 				// Loot (step 7, D7b-A). "Perfect tier" = no loss recorded in this tier (its LastTierLoss bit clear).
 				newLoot = ArenaLoot.ForWin(fight, isBoss, isBoss && (run.LastTierLoss & tierBit) == 0, ArenaRoster.Find(fight.ChallengerId), Random.Shared);
 				run.Loot.AddRange(newLoot);
+				earnedFlags = ArenaAccount.FlagsForWin(run, fight);   // step 5: permanent account flags
 
 				if (isBoss)
 				{
@@ -247,6 +250,15 @@ public sealed class ArenaBattleService
 			{
 				notes.Add("loot: " + string.Join(", ", newLoot.Select(ArenaLoot.Describe)));
 				PushLoot(battle.Session, run, newLoot, userName);
+			}
+			var newFlags = _store.AddFlags(profileId, earnedFlags);
+			if (newFlags.Count > 0)
+			{
+				notes.Add("new account flags: " + string.Join(", ", newFlags));
+				// The client replaces its whole flag list with this one; it shows up at the next lobby open.
+				var all = ArenaAccount.ToFlagData(_store.GetFlags(profileId));
+				if (!battle.Session.TrySendMessageToClient(new UserFlagsUpdatedEventArgs(all)))
+					_logger?.LogWarning("Arena: couldn't push the flags to {user}; they are sent at the next login", userName);
 			}
 			if (notes.Count > 0)
 				_logger?.LogInformation("Arena: {user}: {notes}", userName, string.Join("; ", notes));

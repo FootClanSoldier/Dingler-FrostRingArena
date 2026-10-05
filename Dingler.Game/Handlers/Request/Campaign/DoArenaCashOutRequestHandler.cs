@@ -45,18 +45,21 @@ public sealed class DoArenaCashOutRequestHandler : IRequestHandler<DoArenaCashOu
 			// With wins: the run becomes CashedOut (the client then shows its summary and loot windows and finally sends
 			// DestroyArenaData). Nothing enters the collection (D7-A). A repeat gets the same list.
 			var gold = run.Loot.Sum(l => l.Gold);
+			// Sleeves (step 5) are paid here only, never pushed during the run (the in-run pop-up throws on them).
+			var sleeves = ArenaAccount.SleevesFor(run);
 			if (run.State != ArenaRunRecord.CashedOut)
 			{
 				run.State = ArenaRunRecord.CashedOut;
 				_store.Save(run);
-				_logger?.LogInformation("Arena: {user} cashed out run {arena} with {wins} wins and {loses} strikes: {gold} gold, {chests} chest(s)",
-					context.UserName, run.ArenaId, run.Wins, run.Loses, gold, run.Loot.Count(l => l.Type != ArenaLoot.Gold));
+				_logger?.LogInformation("Arena: {user} cashed out run {arena} with {wins} wins and {loses} strikes: {gold} gold, {chests} chest(s), sleeves: {sleeves}",
+					context.UserName, run.ArenaId, run.Wins, run.Loses, gold, run.Loot.Count(l => l.Type != ArenaLoot.Gold),
+					sleeves.Count == 0 ? "none" : string.Join(", ", sleeves.Select(ArenaAccount.SleeveName)));
 			}
 			return new DoArenaCashOutResponse
 			{
 				Success = true,
 				GoldWin = gold,
-				AllLoot = run.Loot.Select(l => ArenaLoot.ToReward(run, l)).ToList(),
+				AllLoot = run.Loot.Select(l => ArenaLoot.ToReward(run, l)).Concat(sleeves).ToList(),
 				Error = EDoArenaCashOutError.Ok,
 				ErrorMessage = string.Empty,
 			};

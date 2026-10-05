@@ -176,6 +176,20 @@ namespace Dingler.Game.Services
                 encodedData.Add(EncData.Encode(deck));
             }
 
+            // Frost Ring Arena account flags (step 5): the client takes a List<FlagData> chunk as its whole flag list
+            // (PlayerProfile.HandleProfileStream). Sent only when the player has some, so other profiles are unchanged.
+            if (_arenaRunStore?.GetFlags(profileId) is { Count: > 0 } arenaFlags)
+            {
+                try
+                {
+                    encodedData.Add(EncData.Encode(Dingler.Game.Arena.ArenaAccount.ToFlagData(arenaFlags)));
+                }
+                catch (Exception ex)
+                {
+                    Dingler.Game.Protocol.StaticLogger.LogError("Arena: encoding the account flags failed ({error}); login goes on without them", ex.Message);
+                }
+            }
+
             List<Task> tasks = new();
             for (int i = 0; i < encodedData.Count; i++)
             {
