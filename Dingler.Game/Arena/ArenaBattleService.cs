@@ -4,6 +4,7 @@ using Dingler.Server;
 using Dingler.Game.Games;
 using HexGame::Game.Shared;
 using HexGame::Game.Shared.Mechanics;
+using HexGame::Game.Shared.Network.Campaign;
 using HexGame::Reckoning.Game;
 using Microsoft.Extensions.Logging;
 
@@ -27,6 +28,8 @@ public sealed class ArenaBattleService
 		public required UID Ai { get; init; }
 		public required ulong ArenaId { get; init; }
 		public required ulong FightId { get; init; }
+		/// <summary>The player's connection when the battle started; the loot is pushed through it.</summary>
+		public required SessionContext Session { get; init; }
 		public int Applied;
 	}
 
@@ -126,6 +129,7 @@ public sealed class ArenaBattleService
 			Ai = new UID(UID.Type.ServiceAI, pending.GameId),
 			ArenaId = run.ArenaId,
 			FightId = pending.FightId,
+			Session = context,
 		};
 		var profileId = context.ProfileId;
 		var userName = context.UserName!;
@@ -187,6 +191,7 @@ public sealed class ArenaBattleService
 			var isBoss = fight.Order % 5 == 4;
 			var tierBit = 2 << (fight.Order / 5);   // TierLoss: tier 1 = 2, tier 2 = 4, tier 3 = 8, tier 4 = 16
 			var notes = new List<string>();
+			var newLoot = new List<ArenaLootRecord>();
 			if (won)
 			{
 				fight.Result = "WIN";
@@ -211,6 +216,10 @@ public sealed class ArenaBattleService
 					}
 				}
 
+				// Loot (step 7, D7b-A). "Perfect tier" = no loss recorded in this tier (its LastTierLoss bit clear).
+				newLoot = ArenaLoot.ForWin(fight, isBoss, isBoss && (run.LastTierLoss & tierBit) == 0, ArenaRoster.Find(fight.ChallengerId), Random.Shared);
+				run.Loot.AddRange(newLoot);
+
 				if (isBoss)
 				{
 					if (run.Buffs.Count > 0)
@@ -234,6 +243,11 @@ public sealed class ArenaBattleService
 					fight.Result = "LOSE";   // D5-A: a lost regular fight is a strike and the run moves on; a lost boss is replayed (buffs kept)
 			}
 			_store.Save(run);
+			if (newLoot.Count > 0)
+			{
+				notes.Add("loot: " + string.Join(", ", newLoot.Select(ArenaLoot.Describe)));
+				PushLoot(battle.Session, run, newLoot, userName);
+			}
 			if (notes.Count > 0)
 				_logger?.LogInformation("Arena: {user}: {notes}", userName, string.Join("; ", notes));
 
@@ -244,6 +258,31 @@ public sealed class ArenaBattleService
 		{
 			_logger?.LogError(ex, "Arena: applying the battle result failed for {user}", userName);
 		}
+	}
+
+	/// <summary>
+	/// Sent while the client is still in the battle (the engine reports the end before the final flush). The client only
+	/// stores it (ArenaClient.UpdateLoot: no lobby is subscribed) and shows the "Rewards" pop-up when the lobby opens
+	/// (SafeOnArenaJoin), without setting m_UINotificationActive, so leaving mid-pop-up can't leave it stuck. Hogarth's
+	/// pending lines go right after it: closing the pop-up plays them in order. Sent alone they would wait for a later loot
+	/// window, so they go only with loot; if the push fails they stay pending for the next battle's start.
+	/// Never an empty list (study 01 §2.12), and one batch per result.
+	/// </summary>
+	private void PushLoot(SessionContext session, ArenaRunRecord run, List<ArenaLootRecord> loot, string userName)
+	{
+		var rewards = loot.Select(l => ArenaLoot.ToReward(run, l)).ToList();
+		if (!session.TrySendMessageToClient(new LootUpdateEventArgs(rewards)))
+		{
+			_logger?.LogWarning("Arena: couldn't push the loot to {user} (disconnected?); it is kept for cash-out", userName);
+			return;
+		}
+		if (run.PendingConversations.Count == 0)
+			return;
+		foreach (var conversation in run.PendingConversations)
+			session.TrySendMessageToClient(new BuffConversationEventArgs(new ResourceId(conversation)));
+		_logger?.LogInformation("Arena: {user}: {count} Hogarth line(s) sent with the loot", userName, run.PendingConversations.Count);
+		run.PendingConversations.Clear();
+		_store.Save(run);
 	}
 
 	private static bool Fail(string why, out string reason)

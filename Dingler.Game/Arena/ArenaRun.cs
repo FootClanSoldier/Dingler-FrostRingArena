@@ -26,8 +26,10 @@ public sealed class ArenaRunRecord
 	public List<ArenaFightRecord> Fights { get; set; } = new();
 	/// <summary>Pending buffs (kinds: Health, Charge, Resource, Brawler), max 2, used up when a boss is beaten.</summary>
 	public List<string> Buffs { get; set; } = new();
-	/// <summary>Hogarth's lines to play when the player is next in the lobby (buff rewards, strike removals).</summary>
+	/// <summary>Hogarth's lines (buff rewards, strike removals) not yet delivered with a loot push; played at the next battle's start.</summary>
 	public List<string> PendingConversations { get; set; } = new();
+	/// <summary>Every reward earned in the run (step 7), sent again in full at cash-out.</summary>
+	public List<ArenaLootRecord> Loot { get; set; } = new();
 }
 
 public sealed class ArenaFightRecord
@@ -59,6 +61,10 @@ public static class ArenaReplies
 		FightId = CurrentFight(run).FightId,
 		LastTierLoss = run.LastTierLoss,
 		IsBuyout = run.IsBuyout,
+		// The lobby's counters: pouches = GoldPacks, chests = EquipmentPacks + CardPacks (UIArenaCampaignContext.AssignLootIndicators).
+		GoldPacks = run.Loot.Count(l => l.Type == ArenaLoot.Gold && l.Reason == ArenaLoot.Gold),
+		EquipmentPacks = run.Loot.Count(l => l.Type == ArenaLoot.Equipment),
+		CardPacks = run.Loot.Count(l => l.Type == ArenaLoot.Card),
 		Buffs = run.Buffs.Select(ArenaChallengeMods.FindBuff).OfType<ArenaChallengeMods.Buff>().Take(2)
 			.Select(ArenaChallengeMods.ToArenaBuff).ToList(),
 	};
