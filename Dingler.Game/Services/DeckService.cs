@@ -17,11 +17,17 @@ namespace Dingler.Game.Services
     {
         private readonly DeckRepository _deckRepository;
         private readonly CollectionCacheService _collectionService;
+        private readonly Dingler.Game.Arena.ArenaRunStore _arenaRunStore;
 
-        public DeckService(DeckRepository deckRepository, CollectionCacheService collectionService)
+        // Contains "locked": the client then shows its own "deck is locked" message.
+        private const string ArenaLockedMessage = "This deck is locked to the Frost Ring Arena until the run ends.";
+
+        public DeckService(DeckRepository deckRepository, CollectionCacheService collectionService,
+            Dingler.Game.Arena.ArenaRunStore arenaRunStore)
         {
             _deckRepository = deckRepository;
             _collectionService = collectionService;
+            _arenaRunStore = arenaRunStore;
         }
 
         public async Task<List<Deck>> GetPlayerDecksAsync(ulong playerProfileId)
@@ -36,6 +42,13 @@ namespace Dingler.Game.Services
         public async Task<AddNewDeckResponse> AddNewDeck(SessionContext context, AddNewDeckRequestArgs args)
         {
             var playerId = context.ProfileId;
+
+            // Saving a new deck under an existing name replaces (deletes) the old one: never the arena's deck.
+            if (context.Decks.Values.Any(d => string.Equals(d.DeckName, args.DeckName, StringComparison.OrdinalIgnoreCase) &&
+                                              _arenaRunStore.IsDeckInRun(playerId, d.Id)))
+            {
+                return new AddNewDeckResponse() { Error = EAddNewDeckError.InternalServerError, ErrorMessage = ArenaLockedMessage };
+            }
 
             var removeTask = _deckRepository.RemoveDeckWithNameOwnedByPlayer(args.DeckName, playerId);
 
@@ -123,6 +136,14 @@ namespace Dingler.Game.Services
         public async Task<UpdateDeckResponse> UpdateDeckAsync(SessionContext context, UpdateDeckRequestArgs args)
         {
             var deckId = args.DeckID.GetInstanceId();
+
+            if (_arenaRunStore.IsDeckInRun(context.ProfileId, deckId))
+            {
+                return new UpdateDeckResponse()
+                {
+                    DeckID = args.DeckID, Error = EUpdateDeckError.InternalServerError, ErrorMessage = ArenaLockedMessage, updated = false,
+                };
+            }
 
             var isUpdate = context.Decks.TryGetValue(deckId, out var deckBits);
 
@@ -240,6 +261,15 @@ namespace Dingler.Game.Services
         public async Task<RemoveDeckResponse> RemoveDeckAsync(SessionContext userProfile, RemoveDeckRequestArgs args)
         {
             var deckId = args.DeckID.GetInstanceId();
+
+            if (_arenaRunStore.IsDeckInRun(userProfile.ProfileId, deckId))
+            {
+                return new RemoveDeckResponse()
+                {
+                    DeckID = args.DeckID, Error = ERemoveDeckError.InternalServerError, ErrorMessage = ArenaLockedMessage, succeded = false,
+                };
+            }
+
             var removeTask = _deckRepository.RemoveDeckAsync((int)deckId);
 
             userProfile.Decks.Remove(deckId, out _);

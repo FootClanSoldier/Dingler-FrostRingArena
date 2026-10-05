@@ -49,7 +49,14 @@ namespace Dingler.Game.CompositionRoot
                         "Auth:BaseUrl must be an absolute URL, e.g. https://localhost:5000");
                 
                 
-                sc.AddSingletonStartupService(_ => new CollectionCacheService(gameDataLocation))
+                // Frost Ring Arena runs: one JSON file per player, next to gameData.db unless Arena:StorePath says otherwise.
+                var arenaStorePath = hb.Configuration["Arena:StorePath"] is { Length: > 0 } configuredPath
+                    ? configuredPath
+                    : Path.Combine(AppContext.BaseDirectory, "data", "arena");
+                var arenaRunStore = new Dingler.Game.Arena.ArenaRunStore(arenaStorePath);
+                sc.AddSingleton(arenaRunStore);
+
+                sc.AddSingletonStartupService(_ => new CollectionCacheService(gameDataLocation, arenaRunStore))
                     .AddHttpClient("AuthClient", (sp, client) =>
                     {
                         var auth = sp.GetRequiredService<IOptions<AuthOptions>>().Value;
