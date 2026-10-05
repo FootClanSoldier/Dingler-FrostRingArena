@@ -199,22 +199,23 @@ public sealed class ArenaBattleService
 				fight.Result = "WIN";
 				run.Wins++;
 
-				// A won challenge: one of the 4 buffs at random for the next boss fight (D6-A, at most 2 pending), Hogarth's
-				// "Reward" line, and one strike removed if there is one ("Challenge Win Strike Removal").
+				// A won challenge (owner's update, 2026-10-05, from an ex-player's memory): with a strike on record, one strike
+				// is removed ("Challenge Win Strike Removal"); with none, one of the 4 buffs at random for the next boss fight
+				// (D6-A, at most 2 pending) and its "Reward" line.
 				if (fight.Challenge is not null)
 				{
-					if (run.Buffs.Count < 2)
+					if (run.Loses > 0)
+					{
+						run.Loses--;
+						run.PendingConversations.Add(ArenaChallengeMods.ChallengeWinStrikeRemoval);
+						notes.Add("challenge won: strike removed");
+					}
+					else if (run.Buffs.Count < 2)
 					{
 						var buff = ArenaChallengeMods.Buffs[Random.Shared.Next(ArenaChallengeMods.Buffs.Count)];
 						run.Buffs.Add(buff.Kind);
 						run.PendingConversations.Add(buff.RewardConversation);
 						notes.Add($"challenge won: {buff.Kind} buff");
-					}
-					if (run.Loses > 0)
-					{
-						run.Loses--;
-						run.PendingConversations.Add(ArenaChallengeMods.ChallengeWinStrikeRemoval);
-						notes.Add("strike removed for the challenge");
 					}
 				}
 
