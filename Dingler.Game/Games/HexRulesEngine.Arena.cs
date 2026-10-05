@@ -1,4 +1,4 @@
-extern alias HexGame;
+﻿extern alias HexGame;
 using System.Reflection;
 using Dingler.Game.Arena.Ai;
 using Dingler.Game.Cards;
@@ -146,7 +146,10 @@ public sealed partial class HexRulesEngine
 		}
 		seat.RevealNow.Clear();
 
-		seat.AddIfChanged("L", CombatListingFor(seat.Player, CombatManager.GetAllCombatAttacks()), events);
+		// A combat whose attacker died stays in the engine with no attacker (Session.PruneDeadCombats skips it); listed, it
+		// reaches the AI as attacker Card.0, which its combat evaluator can't look up (AICardEvaluator.GetCombatValue,
+		// AITactical.AIHandleAttackDefensePriorityWindow), so the AI threw and passed. Offline: 11 of 200 games -> 0.
+		seat.AddIfChanged("L", CombatListingFor(seat.Player, CombatManager.GetAllCombatAttacks().Where(c => c.Attacker != null).ToList()), events);
 		return events;
 	}
 
