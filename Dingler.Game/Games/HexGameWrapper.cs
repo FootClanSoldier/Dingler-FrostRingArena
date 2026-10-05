@@ -60,7 +60,18 @@ public class HexGameWrapper : IDisposable
 		_pendingReconnects = new ConcurrentQueue<UID>();
 	}
 	
-	public bool IsGameEnded { get; private set; }
+	public bool IsGameEnded => _gameSession.IsGameEnded;
+
+	// Frost Ring Arena: the run's deck (the reconnect reply needs it; tournaments take it from TournamentDecks).
+	public bool IsArena => _gameSession.IsPvEArena();
+	public ulong ArenaDeckInstanceId { get; set; }
+
+	/// <summary>The player declined to rejoin a disconnected arena battle: it counts as a loss (design 03 D15-A).</summary>
+	public void ForfeitArena(UID humanId)
+	{
+		if (!IsGameEnded)
+			_gameSession.SubmitTransaction(QuitGameTransaction.Create(humanId, false, false));   // Create already initializes it
+	}
 
 	public Task<(UID, UID)> RunGameAsync()
 	{
@@ -156,7 +167,7 @@ public class HexGameWrapper : IDisposable
 			? new List<Player>()
 			: _gameSession.GetOpponentsOfPlayer(player);
 
-		var deckId = UID.Invalid;
+		var deckId = IsArena && ArenaDeckInstanceId != 0 ? new UID(UID.Type.Deck, ArenaDeckInstanceId) : UID.Invalid;
 		if (_gameSession.m_EncounterData?.TournamentDecks is { } decks)
 		{
 			var deckEntry = decks.FirstOrDefault(d => d.PlayerUID == playerId);

@@ -55,6 +55,7 @@ namespace Dingler.Game.CompositionRoot
                     : Path.Combine(AppContext.BaseDirectory, "data", "arena");
                 var arenaRunStore = new Dingler.Game.Arena.ArenaRunStore(arenaStorePath);
                 sc.AddSingleton(arenaRunStore);
+                sc.AddSingleton<Dingler.Game.Arena.ArenaBattleService>();
 
                 sc.AddSingletonStartupService(_ => new CollectionCacheService(gameDataLocation, arenaRunStore))
                     .AddHttpClient("AuthClient", (sp, client) =>

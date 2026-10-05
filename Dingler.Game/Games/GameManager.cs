@@ -6,7 +6,10 @@ using Dingler.Game.Cards;
 using Dingler.Game.GameObjects;
 using Dingler.Game.Tournaments;
 using HexGame::Game.Shared;
+using HexGame::Game.Shared.Domain;
+using HexGame::Game.Shared.Mechanics;
 using HexGame::Game.Shared.Tournaments;
+using HexGame::Reckoning.Game;
 using Microsoft.Extensions.Logging;
 
 namespace Dingler.Game.Games;
@@ -19,14 +22,15 @@ public sealed class GameManager : IDisposable
 	private readonly ILoggerFactory? _loggerFactory;
 	private readonly ILogger<GameManager>? _logger;
 	private ulong _currentMatchId;
-	private readonly Dictionary<ulong, CancellationTokenSource> _gameCtsCollection;
+	// Concurrent: arena games are created on request threads while matches end on engine threads.
+	private readonly ConcurrentDictionary<ulong, CancellationTokenSource> _gameCtsCollection;
 
 	public GameManager(SessionManager sessionManager, ILoggerFactory? loggerFactory)
 	{
 		_sessionManager = sessionManager;
 		_logger = loggerFactory?.CreateLogger<GameManager>();
 		_loggerFactory = loggerFactory;
-		_gameCtsCollection = new Dictionary<ulong, CancellationTokenSource>();
+		_gameCtsCollection = new ConcurrentDictionary<ulong, CancellationTokenSource>();
 	}
 
 	public HexGameWrapper CreateGameSession(ulong tournamentId, TournamentPairing pairing,
@@ -124,6 +128,75 @@ public sealed class GameManager : IDisposable
 		return encounterData;
 	}
 
+	/// <summary>A new game id, shared with tournament games.</summary>
+	public ulong NextGameId() => Interlocked.Increment(ref _currentMatchId);
+
+	/// <summary>
+	/// Frost Ring Arena: one battle between the logged-in player (a type-244 seat with their stored deck) and the
+	/// client's own AI (a type-248 seat with the arena opponent's deck), under session flag 128. The game is built and
+	/// started here, on the calling thread, before its engine pump runs; the pump starts at once and waits until the
+	/// player says they're ready (ReadyToStartGame). Clocks per design 03 D17-A.
+	/// </summary>
+	public HexGameWrapper CreateArenaGame(ulong gameId, string sessionName, SessionStateEncounterData encounterData,
+		UID humanId, deck_bits humanDeck, string userName, List<ETurnPhases>? selfStops, List<ETurnPhases>? opponentStops,
+		UID aiId, ResourceId aiDeckTemplateId, List<EncounterModBase> battleMods,
+		Action<HexRulesEngine, List<UID>, List<UID>> onGameEnded)
+	{
+		var engine = new HexRulesEngine(sessionName, new UID(UID.Type.AuthoritativeSession, gameId),
+			_loggerFactory?.CreateLogger<HexRulesEngine>())
+		{
+			m_EncounterData = encounterData,
+			ForcedFirstPlayer = UID.Invalid,   // the engine's coin flip decides who starts
+			ArenaMods = battleMods,
+		};
+
+		// A watchdog: no arena battle lasts 3 hours.
+		var gameCts = new CancellationTokenSource(TimeSpan.FromHours(3));
+		_gameCtsCollection[gameId] = gameCts;
+
+		var wrapper = new HexGameWrapper(engine, new CardVisibilityManager(), _sessionManager, gameCts.Token,
+			_loggerFactory?.CreateLogger<HexGameWrapper>(), CleanupMatch);
+		engine.GameEnded += (winners, losers) => onGameEnded(engine, winners, losers);
+
+		var human = new TrackedPlayer(new PlayerState { PlayerId = humanId, PlayerPosition = 0 }, UID.Invalid);
+		var ai = new TrackedPlayer(new PlayerState { PlayerId = aiId, PlayerPosition = 1 }, UID.Invalid)
+		{
+			m_DeckTemplateID = aiDeckTemplateId,
+		};
+		human.GameTimer.MatchClockLimit = TimeSpan.FromDays(1);
+		human.GameTimer.InactivityLimit = TimeSpan.FromMinutes(45);
+		ai.GameTimer.MatchClockLimit = TimeSpan.FromDays(1);
+		ai.GameTimer.InactivityLimit = TimeSpan.FromDays(1);
+
+		// The player's own priority stops, as their client sent them (JoinSession); the engine adds the mandatory ones.
+		if (selfStops is not null && opponentStops is not null)
+			human.SetTurnPhases(selfStops.Distinct().ToList(), opponentStops.Distinct().ToList());
+
+		try
+		{
+			wrapper.TryAddPlayer(human);
+			wrapper.TryAddPlayer(ai);
+			engine.AttachAiSeat(new Dingler.Game.Arena.Ai.ArenaAiSeat(engine, ai, human, _loggerFactory?.CreateLogger("ArenaAi")));
+			engine.StartArenaGame(human, humanDeck, userName, ai);
+		}
+		catch (Exception ex)
+		{
+			_logger?.LogError("Arena battle {MatchId} could not start: {Exception}", gameId, ex);
+			_gameCtsCollection.TryRemove(gameId, out _);
+			gameCts.Dispose();
+			wrapper.Dispose();
+			throw;
+		}
+
+		wrapper.ArenaDeckInstanceId = humanDeck.Id;
+		_runningMatches[gameId] = wrapper;
+		_gamePlayerIsIn[userName] = wrapper;
+		_ = wrapper.RunGameAsync(UID.Invalid);
+
+		_logger?.LogInformation("Arena battle {MatchId} started for {Player}", gameId, userName);
+		return wrapper;
+	}
+
 	private void CleanupMatch(ulong matchId)
 	{
 		if (_runningMatches.TryRemove(matchId, out var match))
@@ -137,7 +210,7 @@ public sealed class GameManager : IDisposable
 				matchId);
 		}
 
-		_gameCtsCollection.Remove(matchId, out var cts);
+		_gameCtsCollection.TryRemove(matchId, out var cts);
 
 		if (cts is not null)
 		{

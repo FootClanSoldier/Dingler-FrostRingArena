@@ -15,7 +15,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Dingler.Game.Games;
 
-public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
+public sealed partial class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 { 
 	private readonly Channel<bool> _workSignal = Channel.CreateUnbounded<bool>();
 	private readonly SemaphoreSlim _semaphoreSlim = new(1);
@@ -78,6 +78,14 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 						continueProcessing = Update();
 						SendChangedCardUpdates();
 						FlushReady?.Invoke();
+
+						// Arena: the AI seat asked to void the battle (design 03 D15-A); end it here so a flush follows.
+						if (_voidRequested && !IsGameEnded)
+						{
+							EndArenaBattleAsVoid();
+							FlushReady?.Invoke();
+							break;
+						}
 					} while (continueProcessing);
 
 					if (IsGameEnded)
@@ -97,7 +105,14 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 					{
 						try
 						{
-							EndGame(new List<UID>(), m_Players.Select(p => p.m_PlayerId).ToList(), forceEnd: true);
+							if (IsPvEArena())
+							{
+								_voidRequested = true;
+								VoidReason ??= "engine-exception: " + ex.Message;
+								EndArenaBattleAsVoid();
+							}
+							else
+								EndGame(new List<UID>(), m_Players.Select(p => p.m_PlayerId).ToList(), forceEnd: true);
 						}
 						catch
 						{
@@ -106,6 +121,14 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 					}
 					
 					FlushReady?.Invoke();
+
+					// The crash path ended the game: leave, so the match is cleaned up (it used to wait for a signal
+					// that never came, keeping the finished game registered for hours).
+					if (IsGameEnded)
+					{
+						while (_workSignal.Reader.TryRead(out _)) ;
+						break;
+					}
 				}
 			}
 		}
@@ -117,7 +140,7 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 		}
 
 		_logger?.LogDebug("Game has ended. Returning");
-		m_EncounterData.MatchPreviousWinners.Add(Winner.GetInstanceId());
+		m_EncounterData.MatchPreviousWinners?.Add(Winner.GetInstanceId());
 		return
 		[
 			Winner,
@@ -135,6 +158,12 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 	
 	public override void DispatchSessionEvent(Player player, SessionEventArgs args)
 	{
+		if (IsAiSeat(player))
+		{
+			AiSeat!.Enqueue(args);
+			return;
+		}
+
 		try
 		{
 			DispatchToPlayer?.Invoke(player, args);
@@ -308,6 +337,9 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 
 	public override bool SendPlayerOptions(Player player)
 	{
+		if (IsAiSeat(player))
+			return AiSendPlayerOptions(player);
+
 		var options = _gameOptionService.CreateOptionListForPlayer(player);
 		DispatchSessionEvent(player, options);
 		return true;
@@ -316,6 +348,9 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 	public override bool SendPlayerOptionsFor(Player player, Card sourceCard, AbilityTemplate abilityTemplate,
 		AbilityInstance abilityInstance)
 	{
+		if (IsAiSeat(player))
+			return AiSendPlayerOptionsFor(player, sourceCard, abilityTemplate, abilityInstance);
+
 		if (!player.m_AcceptedStartingHand)
 			return false;
 		
@@ -327,6 +362,9 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 	public override bool SendPlayerOptionsFor(Player player, List<Card> cards, List<AbilityTemplate> templates,
 		List<AbilityInstance> abilityInstances)
 	{
+		if (IsAiSeat(player))
+			return AiSendPlayerOptionsFor(player, cards, templates, abilityInstances);
+
 		var options = _gameOptionService.CreateOptionListForPlayer(player, cards, templates, abilityInstances);
 		DispatchSessionEvent(player, options);
 		return true;
@@ -393,6 +431,12 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 
 	public override bool SendRevealedCards(Player player, List<SessionCardId> cards)
 	{
+		if (IsAiSeat(player))
+		{
+			AiSeat!.NoteReveal(cards);
+			return true;
+		}
+
 		foreach (var cardId in cards)
 		{
 			var card = ResourceCache.GetCard(cardId);
@@ -412,8 +456,8 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 
 		IsGameEnded = true;
 		m_GameTerminated = true;
-		Winner = winners[0];
-		Loser = losers[0];
+		Winner = winners.Count > 0 ? winners[0] : UID.Invalid;
+		Loser = losers.Count > 0 ? losers[0] : UID.Invalid;
 		try
 		{
 			return base.EndGame(winners, losers, forceEnd);
@@ -447,6 +491,9 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 	{
 		foreach (var player in GetAllPlayers())
 		{
+			if (IsAiSeat(player))
+				continue;
+
 			if (card.CanPlayerSeeCard(player))
 			{
 				_cardVisibilityManager.TrySetCardAsVisibleForPlayer(player, card);
@@ -744,6 +791,9 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 		for (var i = 0; i < players.Count; i++)
 		{
 			var player = players[i];
+			if (IsAiSeat(player))
+				continue;
+
 			foreach (var card in _cardStatManager.FilterCardsWithUpdates(player, visibleCardsByPlayer[i]))
 			{
 				var cardUpdate =
@@ -755,6 +805,7 @@ public sealed class HexRulesEngine : AuthoritativeSessionBase, IDisposable
 
 	public void Dispose()
 	{
+		AiSeat?.Dispose();
 		_semaphoreSlim.Dispose();
 
 		foreach (var player in m_Players)

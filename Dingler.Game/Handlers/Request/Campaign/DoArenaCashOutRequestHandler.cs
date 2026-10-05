@@ -41,9 +41,23 @@ public sealed class DoArenaCashOutRequestHandler : IRequestHandler<DoArenaCashOu
 				return Reply(EDoArenaCashOutError.FailedNoWins);
 			}
 
-			// Wins > 0 needs loot (build step 7); battles that can be won come in build step 4.
-			_logger?.LogWarning("Arena: {user} cashed out run {arena} with {wins} wins, but rewards aren't built yet", context.UserName, run.ArenaId, run.Wins);
-			return Reply(EDoArenaCashOutError.FailedToRewardItems);
+			// With wins: the run becomes CashedOut (the client then shows its summary and loot windows and finally sends
+			// DestroyArenaData). Loot itself is build step 7: until then the reward list is empty. A repeat gets the same.
+			if (run.State != ArenaRunRecord.CashedOut)
+			{
+				run.State = ArenaRunRecord.CashedOut;
+				_store.Save(run);
+				_logger?.LogInformation("Arena: {user} cashed out run {arena} with {wins} wins and {loses} strikes (no loot yet)",
+					context.UserName, run.ArenaId, run.Wins, run.Loses);
+			}
+			return new DoArenaCashOutResponse
+			{
+				Success = true,
+				GoldWin = 0,
+				AllLoot = new List<ArenaReward>(),
+				Error = EDoArenaCashOutError.Ok,
+				ErrorMessage = string.Empty,
+			};
 		}
 		catch (Exception ex)
 		{

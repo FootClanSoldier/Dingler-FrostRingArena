@@ -6,13 +6,21 @@ namespace Dingler.Game.Games;
 public sealed class GameTimer : IDisposable
 {
 	private readonly UID _playerId; 
-	private readonly TimeSpan _inactivityTime = new (0, 0, 5, 0);
+	private TimeSpan _inactivityTime = new (0, 0, 5, 0);
 	private TimeSpan _initialMatchTime = new (0, 20, 0);
 
 	public TimeSpan MatchClockLimit
 	{
 		get => _initialMatchTime;
 		set => _initialMatchTime = value;
+	}
+
+	// Arena battles use 45 minutes for the human and effectively none for the AI seat (design 03 D17-A).
+	// Keep values under ~24 days: they go to Task.Delay.
+	public TimeSpan InactivityLimit
+	{
+		get => _inactivityTime;
+		set => _inactivityTime = value;
 	}
 	private DateTime _lastRun;
 	private CancellationTokenSource? _cts;
