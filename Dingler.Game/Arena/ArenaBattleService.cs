@@ -108,6 +108,17 @@ public sealed class ArenaBattleService
 			return Fail($"deck {deckId} is not the run's deck {run.DeckId}", out reason);
 		if (!context.Decks.TryGetValue(run.DeckId, out var deck))
 			return Fail($"deck {run.DeckId} not found in the player's decks", out reason);
+		var fightId = pending.FightId;
+		var fightRecord = run.Fights.FirstOrDefault(f => f.FightId == fightId);
+		if (fightRecord is null)
+			return Fail("the reserved fight is gone", out reason);
+		// The fight's Hogarth challenge and, at a boss, the pending buffs (step 6). Fresh mod objects every battle.
+		var battleMods = ArenaChallengeMods.ForFight(run, fightRecord, new Random(), run.PendingConversations.ToList());
+		if (run.PendingConversations.Count > 0)
+		{
+			run.PendingConversations.Clear();   // played at this battle's start
+			_store.Save(run);
+		}
 
 		var battle = new ActiveBattle
 		{
@@ -125,7 +136,7 @@ public sealed class ArenaBattleService
 		{
 			battle.Game = games.CreateArenaGame(pending.GameId, pending.SessionState.SessionName, pending.SessionState.EncounterData,
 				battle.Human, deck, userName, selfStops, opponentStops, battle.Ai, pending.AiDeck,
-				new List<EncounterModBase>(),   // buffs and Hogarth's challenges come in build step 6
+				battleMods,
 				(engine, winners, losers) => OnGameEnded(profileId, userName, battle, engine, winners));
 		}
 		catch (Exception ex)
@@ -173,19 +184,58 @@ public sealed class ArenaBattleService
 
 			var won = winners.Contains(battle.Human);
 			var opponent = ArenaRoster.Find(fight.ChallengerId)?.ChampionName ?? fight.ChallengerId.ToString();
+			var isBoss = fight.Order % 5 == 4;
+			var tierBit = 2 << (fight.Order / 5);   // TierLoss: tier 1 = 2, tier 2 = 4, tier 3 = 8, tier 4 = 16
+			var notes = new List<string>();
 			if (won)
 			{
 				fight.Result = "WIN";
 				run.Wins++;
+
+				// A won challenge: one of the 4 buffs at random for the next boss fight (D6-A, at most 2 pending), Hogarth's
+				// "Reward" line, and one strike removed if there is one ("Challenge Win Strike Removal").
+				if (fight.Challenge is not null)
+				{
+					if (run.Buffs.Count < 2)
+					{
+						var buff = ArenaChallengeMods.Buffs[Random.Shared.Next(ArenaChallengeMods.Buffs.Count)];
+						run.Buffs.Add(buff.Kind);
+						run.PendingConversations.Add(buff.RewardConversation);
+						notes.Add($"challenge won: {buff.Kind} buff");
+					}
+					if (run.Loses > 0)
+					{
+						run.Loses--;
+						run.PendingConversations.Add(ArenaChallengeMods.ChallengeWinStrikeRemoval);
+						notes.Add("strike removed for the challenge");
+					}
+				}
+
+				if (isBoss)
+				{
+					if (run.Buffs.Count > 0)
+						notes.Add($"buffs used: {string.Join(", ", run.Buffs)}");
+					run.Buffs.Clear();   // the buffs were for this boss fight
+
+					// A tier won without a loss in it: one strike removed ("Perfected Tier Strike Removal").
+					if ((run.LastTierLoss & tierBit) == 0 && run.Loses > 0 && fight.Order < 19)
+					{
+						run.Loses--;
+						run.PendingConversations.Add(ArenaChallengeMods.PerfectedTierStrikeRemoval);
+						notes.Add("strike removed for a perfect tier");
+					}
+				}
 			}
 			else
 			{
 				run.Loses++;
-				run.LastTierLoss |= 2 << (fight.Order / 5);   // TierLoss: tier 1 = 2, tier 2 = 4, tier 3 = 8, tier 4 = 16
-				if (fight.Order % 5 != 4)
-					fight.Result = "LOSE";   // D5-A: a lost regular fight is a strike and the run moves on; a lost boss is replayed
+				run.LastTierLoss |= tierBit;
+				if (!isBoss)
+					fight.Result = "LOSE";   // D5-A: a lost regular fight is a strike and the run moves on; a lost boss is replayed (buffs kept)
 			}
 			_store.Save(run);
+			if (notes.Count > 0)
+				_logger?.LogInformation("Arena: {user}: {notes}", userName, string.Join("; ", notes));
 
 			_logger?.LogInformation("Arena: {user} {outcome} fight {order} against {opponent} in {turns} turns; run now {wins} wins, {loses} strikes. AI: {ai}",
 				userName, won ? "won" : "lost", fight.Order, opponent, engine.m_TotalTurnsTaken, run.Wins, run.Loses, ai);

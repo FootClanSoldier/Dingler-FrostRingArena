@@ -50,6 +50,11 @@ public sealed class JoinCampaignArenaRequestHandler : IRequestHandler<JoinCampai
 		}
 
 		_logger?.LogInformation("Arena: {user} opened the arena screen (no run yet)", context.UserName);
+		return NoRun();
+	}
+
+	private static JoinCampaignArenaResponse NoRun()
+	{
 		return new JoinCampaignArenaResponse
 		{
 			Success = false,

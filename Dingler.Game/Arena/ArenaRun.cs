@@ -24,6 +24,10 @@ public sealed class ArenaRunRecord
 	public string State { get; set; } = Active;
 	public DateTime CreatedUtc { get; set; }
 	public List<ArenaFightRecord> Fights { get; set; } = new();
+	/// <summary>Pending buffs (kinds: Health, Charge, Resource, Brawler), max 2, used up when a boss is beaten.</summary>
+	public List<string> Buffs { get; set; } = new();
+	/// <summary>Hogarth's lines to play when the player is next in the lobby (buff rewards, strike removals).</summary>
+	public List<string> PendingConversations { get; set; } = new();
 }
 
 public sealed class ArenaFightRecord
@@ -55,7 +59,8 @@ public static class ArenaReplies
 		FightId = CurrentFight(run).FightId,
 		LastTierLoss = run.LastTierLoss,
 		IsBuyout = run.IsBuyout,
-		Buffs = new List<ArenaBuff>(),
+		Buffs = run.Buffs.Select(ArenaChallengeMods.FindBuff).OfType<ArenaChallengeMods.Buff>().Take(2)
+			.Select(ArenaChallengeMods.ToArenaBuff).ToList(),
 	};
 
 	public static ArenaFight ToFight(ArenaRunRecord run, ArenaFightRecord f) => new()
@@ -75,9 +80,15 @@ public static class ArenaReplies
 	public static ArenaChallenger ChallengerOf(ArenaFightRecord f) =>
 		ArenaRoster.Find(f.ChallengerId)?.Challenger ?? EmptyChallenger();
 
-	public static ArenaMCChallenge MCChallengeOf(ArenaFightRecord f) => f.Challenge is null
-		? EmptyMCChallenge()
-		: new ArenaMCChallenge { ChallengeID = f.FightId, TemplateID = new ResourceId(f.Challenge), Header = string.Empty, Body = string.Empty };
+	// On a rejoin the client rebuilds the objective panel from Header and Body, so they carry the conversation's own
+	// heading and objective text (typos included, as stored).
+	public static ArenaMCChallenge MCChallengeOf(ArenaFightRecord f)
+	{
+		if (f.Challenge is null)
+			return EmptyMCChallenge();
+		var (heading, objective) = ArenaChallengeMods.ObjectiveOf(f.Challenge);
+		return new ArenaMCChallenge { ChallengeID = f.FightId, TemplateID = new ResourceId(f.Challenge), Header = heading, Body = objective };
+	}
 
 	// Non-null placeholders for replies without a run (the client dereferences some of them anyway).
 	public static ArenaData EmptyArenaData() => new() { GameMode = ECampaignDifficulty.NORMAL, Buffs = new List<ArenaBuff>() };
