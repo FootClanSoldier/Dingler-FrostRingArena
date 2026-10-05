@@ -428,3 +428,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Frost Ring Arena fork: machine-specific settings, runtime data and logs
+local-env.cmd
+**/data/
+**/logs/

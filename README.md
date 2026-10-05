@@ -1,5 +1,7 @@
 # Dingler
 
+> **`arena` branch:** adds the Frost Ring Arena (PvE), deck import and a few engine fixes. See [ARENA.md](ARENA.md) for what it adds and how to run it.
+
 ## Information
 A server emulator for Hex: Shards of Fate written in C# that attempts to mimic how it ran prior to its shutdown.
 
