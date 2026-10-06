@@ -10,6 +10,9 @@ namespace Dingler.Server;
 public sealed class DinglerEncoder
 {
     private readonly ObjFmt.Encoder _encoder = ObjFmt.MakeEncoder(PickTypeWithSwap, CheckProp);
+    // One encoder per session, but several threads use it (the request handlers, the message sender, pushes from games and
+    // chat). It is not thread-safe: two overlapping encodes crashed a login with an index error and ended the connection.
+    private readonly object _encodeGate = new();
     private static readonly ConcurrentDictionary<MemberInfo, Lazy<bool>> SerializationCache = new();
     private static readonly ConcurrentDictionary<Type, Lazy<string>> DescriptionCache = new();
     private static readonly Dictionary<Type, Type> TypeReplacements = new();
@@ -96,7 +99,10 @@ public sealed class DinglerEncoder
     public byte[] Encode(object data)
     {
         using PooledMemoryStream pooledMemoryStream = MemPool.Get();
-        _encoder.Encode(pooledMemoryStream.Stream, null, data, null, data.GetType());
+        lock (_encodeGate)
+        {
+            _encoder.Encode(pooledMemoryStream.Stream, null, data, null, data.GetType());
+        }
         return pooledMemoryStream.Stream.ToArray();
     }
 }
