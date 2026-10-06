@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
     <Nullable>enable</Nullable>
-    <WarningsAsErrors>Nullable</WarningsAsErrors>
+    <!-- Nullable warnings stay warnings. Making them errors breaks the build with any compiler newer than the pinned SDK (10.0.100), which reports more of them. -->
   </PropertyGroup>
 </Project>

@@ -38,7 +38,7 @@ You need: your HEX: Shards of Fate game files, the free **.NET 10 SDK**, and git
    `Assembly-CSharp-firstpass.dll`, `ICSharpCode.SharpZipLib.dll`, `NCalc.dll`, `SampleClassLibrary.dll`, `System.EnterpriseServices.dll`, `System.Web.Services.dll`, `UnityEngine.dll`.
    - `Assembly-CSharp-firstpass.dll`, `NCalc.dll` and `ICSharpCode.SharpZipLib.dll` go into the `DLLs` folder (for the build).
    - After building, copy all 7 into `Dingler.Terminal\bin\Release\net10.0`.
-3. **Build:** `dotnet build Dingler.slnx -c Release -p:WarningsAsErrors=`. The last switch is needed with a newer SDK than `global.json` pins (it turns 8 new nullable warnings back into warnings).
+3. **Build:** `dotnet build Dingler.slnx -c Release`. (Stock Dingler turns nullable warnings into errors, which fails with SDKs newer than the pinned 10.0.100. This branch keeps them as warnings, so no extra switch is needed.)
 4. **Settings.** Copy `local-env.example.cmd` to `local-env.cmd` and set `GamedataLocation` to your HEX folder. (You can edit `Dingler.Terminal\appsettings.json` instead.)
 5. **Point the client at your server.** In your HEX folder's `config.ini` (keep a copy of the original):
    ```
@@ -81,3 +81,4 @@ Changes to existing files:
 | `CompositionRoot/CompositionRoot.cs` | service registration |
 | `Dingler.Auth/appsettings.json`, `Dingler.Terminal/appsettings.json` | log level, deck import setting |
 | `start-*.cmd`, `.gitignore`, `local-env.example.cmd` | settings in an untracked `local-env.cmd` |
+| `Directory.Build.Props` | nullable warnings are no longer errors (one line) |
