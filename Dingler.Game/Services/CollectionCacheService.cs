@@ -6,6 +6,7 @@ using HexGame::Game.Shared.Network;
 using HexGame::Game.Shared.Resources;
 using HexGame::Reckoning.Game;
 using System.Text.Json;
+using Dingler.Game.Campaign;
 using Dingler.Server;
 using Dingler.Server.Abstractions;
 using Dingler.Data.Entities.GameData;
@@ -24,11 +25,19 @@ namespace Dingler.Game.Services
         public Dictionary<ulong, ResourceId> CollectionIds { get; set; } = new();
 
         private readonly Dingler.Game.Arena.ArenaRunStore? _arenaRunStore;
+        private readonly CampaignOptions? _campaignOptions;
+        private readonly CampaignRunStore? _campaignRunStore;
 
-        public CollectionCacheService(string path, Dingler.Game.Arena.ArenaRunStore? arenaRunStore = null)
+        public CollectionCacheService(
+            string path,
+            Dingler.Game.Arena.ArenaRunStore? arenaRunStore = null,
+            CampaignOptions? campaignOptions = null,
+            CampaignRunStore? campaignRunStore = null)
         {
             _path = path;
             _arenaRunStore = arenaRunStore;
+            _campaignOptions = campaignOptions;
+            _campaignRunStore = campaignRunStore;
         }
         
         public void Initialize()
@@ -119,11 +128,24 @@ namespace Dingler.Game.Services
                 Name = context.UserName
             };
 
+            List<champion_bits> campaignChampions = new();
+            if (_campaignOptions?.BootstrapChampion == true)
+            {
+                var championId = CampaignBootstrapChampion.ChampionId(
+                    profileId, _campaignOptions.DefaultRace);
+                var campaignId = _campaignRunStore?
+                    .GetOrCreate(profileId, championId, _campaignOptions.DefaultRace)
+                    .CampaignId ?? 0;
+                campaignChampions.Add(CampaignBootstrapChampion.Create(
+                    profileId, _campaignOptions, campaignId));
+            }
+
             var reckoningBits = new reckoning_bits()
             {
                 Gold = 0,
                 Platinum = 0,
-                Name = context.UserName
+                Name = context.UserName,
+                Champions = campaignChampions,
             };
 
             List<deck_bits> deckBitsList = new List<deck_bits>();
