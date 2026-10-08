@@ -129,15 +129,13 @@ namespace Dingler.Game.Services
             };
 
             List<champion_bits> campaignChampions = new();
+            CampaignRunRecord? campaignRun = null;
             if (_campaignOptions?.BootstrapChampion == true)
             {
                 var championId = CampaignBootstrapChampion.ChampionId(
                     profileId, _campaignOptions.DefaultRace);
-                var campaignId = _campaignRunStore?
-                    .GetOrCreate(profileId, championId, _campaignOptions.DefaultRace)
-                    .CampaignId ?? 0;
-                campaignChampions.Add(CampaignBootstrapChampion.Create(
-                    profileId, _campaignOptions, campaignId));
+                campaignRun = _campaignRunStore?
+                    .GetOrCreate(profileId, championId, _campaignOptions.DefaultRace);
             }
 
             var reckoningBits = new reckoning_bits()
@@ -182,6 +180,22 @@ namespace Dingler.Game.Services
             catch (Exception ex)
             {
                 Debug.WriteLine(ex.Message);
+            }
+
+            if (_campaignOptions?.BootstrapChampion == true && campaignRun is not null)
+            {
+                var lastDeckId = campaignRun.LastDeckId;
+                if (lastDeckId != 0 && !context.Decks.ContainsKey(lastDeckId))
+                {
+                    // A deleted/stale deck must not be sent back as LastDeckID: the client immediately
+                    // tries to resolve it when launching the campaign. Clear it and reopen the deck editor.
+                    campaignRun = _campaignRunStore?.SetChampionDeck(
+                        profileId, campaignRun.ChampionId, _campaignOptions.DefaultRace, 0) ?? campaignRun;
+                    lastDeckId = 0;
+                }
+
+                campaignChampions.Add(CampaignBootstrapChampion.Create(
+                    profileId, _campaignOptions, campaignRun.CampaignId, lastDeckId, campaignRun.ChampionTalents));
             }
 
             List<byte[]> encodedData =

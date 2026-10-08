@@ -113,6 +113,31 @@ public sealed class CampaignRunStore
         }
     }
 
+    public CampaignRunRecord SetChampionDeck(ulong profileId, ulong championId, int race, ulong deckId)
+    {
+        lock (_gate)
+        {
+            var record = GetOrCreate(profileId, championId, race);
+            record.LastDeckId = deckId;
+            SaveLocked(record);
+            return record;
+        }
+    }
+
+    public CampaignRunRecord SetChampionTalents(ulong profileId, ulong championId, int race, IEnumerable<string> talents)
+    {
+        lock (_gate)
+        {
+            var record = GetOrCreate(profileId, championId, race);
+            record.ChampionTalents = talents
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            SaveLocked(record);
+            return record;
+        }
+    }
+
     public void Delete(CampaignRunRecord record)
     {
         lock (_gate)

@@ -1,4 +1,5 @@
 ﻿extern alias HexGame;
+using HexGame::Game.Shared;
 using HexGame::Game.Shared.Domain;
 using HexGame::Game.Shared.Mechanics;
 
@@ -16,10 +17,15 @@ public static class CampaignBootstrapChampion
         return unchecked(profileId * 1000UL + (ulong)Math.Clamp(race, 1, 8));
     }
 
-    public static champion_bits Create(ulong profileId, CampaignOptions options, ulong lastCampaignId = 0)
+    public static champion_bits Create(
+        ulong profileId,
+        CampaignOptions options,
+        ulong lastCampaignId = 0,
+        ulong lastDeckId = 0,
+        IEnumerable<string>? championTalents = null)
     {
         var race = Math.Clamp(options.DefaultRace, 1, 8);
-        return new champion_bits
+        var champion = new champion_bits
         {
             Name = options.BootstrapChampionName,
             Id = ChampionId(profileId, race),
@@ -30,8 +36,34 @@ public static class CampaignBootstrapChampion
             Gender = (EGender)options.BootstrapChampionGender,
             OwnerChampionId = 0,
             LastCampaignID = lastCampaignId,
-            LastDeckID = 0,
+            LastDeckID = lastDeckId,
             PetName = string.Empty,
         };
+
+        ApplyTalents(champion, championTalents);
+        return champion;
+    }
+
+    private static void ApplyTalents(champion_bits champion, IEnumerable<string>? talentIds)
+    {
+        if (talentIds is null)
+            return;
+
+        // The exact champion_bits surface differs between shipped client assemblies.
+        // Avoid making Phase 1.1 depend on a compile-time ChampionTalents property while
+        // still populating it when this client's contract exposes List<ResourceId>.
+        var property = typeof(champion_bits).GetProperty("ChampionTalents");
+        if (property?.CanWrite != true)
+            return;
+
+        var talents = new List<ResourceId>();
+        foreach (var value in talentIds)
+        {
+            if (Guid.TryParse(value, out var guid))
+                talents.Add(new ResourceId(guid));
+        }
+
+        if (property.PropertyType.IsAssignableFrom(talents.GetType()))
+            property.SetValue(champion, talents);
     }
 }
